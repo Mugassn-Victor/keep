@@ -18,6 +18,7 @@ jobs:
 
       - name: Run backup script
         run: |
+          sed -i 's/\r//' ftp.sh ftp.txt
           chmod +x ftp.sh
           bash ftp.sh
 
