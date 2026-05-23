@@ -2,9 +2,8 @@ name: Backup to Release
 
 on:
   schedule:
-    # 每天运行一次，UTC 时间 05:00（北京时间 13:00）
     - cron: '0 5 * * *'
-  workflow_dispatch: # 允许手动触发
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -17,24 +16,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Trigger backup on all sites
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install Playwright
-        run: npm install playwright
-
-      - name: Install Chromium
-        run: npx playwright install chromium --with-deps
-
-      - name: Download all backups
-        run: node download.js
+      - name: Run backup script
+        run: |
+          chmod +x ftp.sh
+          bash ftp.sh
 
       - name: Upload to GitHub Release
         env:
@@ -43,13 +28,12 @@ jobs:
           RELEASE_TAG="backup"
           REPO="${GITHUB_REPOSITORY}"
           
-          # 获取或创建 Release
           RELEASE_INFO=$(curl -s \
             -H "Authorization: Bearer ${GITHUB_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${REPO}/releases/tags/${RELEASE_TAG}" || echo "")
+            "https://api.github.com/repos/${REPO}/releases/tags/${RELEASE_TAG}")
           
-          RELEASE_ID=$(echo "$RELEASE_INFO" | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*' || echo "")
+          RELEASE_ID=$(echo "$RELEASE_INFO" | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*')
           
           if [ -z "$RELEASE_ID" ]; then
             echo "创建新的 Release..."
@@ -58,119 +42,53 @@ jobs:
               -H "Accept: application/vnd.github+json" \
               -H "Content-Type: application/json" \
               "https://api.github.com/repos/${REPO}/releases" \
-              -d "{\"tag_name\":\"${RELEASE_TAG}\",\"target_commitish\":\"${GITHUB_REF_NAME}\",\"name\":\"Backup\",\"body\":\"\",\"draft\":false,\"prerelease\":false}" || echo "")
-            RELEASE_ID=$(echo "$CREATE_RESP" | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*' || echo "")
+              -d "{\"tag_name\":\"${RELEASE_TAG}\",\"target_commitish\":\"${GITHUB_REF_NAME}\",\"name\":\"Backup\",\"body\":\"\",\"draft\":false,\"prerelease\":false}")
+            RELEASE_ID=$(echo "$CREATE_RESP" | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*')
           fi
           
           [ -z "$RELEASE_ID" ] && { echo "无法获取/创建 Release"; exit 1; }
           
           echo "Release ID: $RELEASE_ID"
           
-          # 上传所有 zip 文件
-          for zipfile in website/*.zip; do
-            [ ! -f "$zipfile" ] && continue
+          for file in *.7z; do
+            [ ! -f "$file" ] && continue
             
-            filename=$(basename "$zipfile")
-            filesize=$(stat -c%s "$zipfile" 2>/dev/null || echo 0)
-            filesize_gb=$(echo "scale=2; $filesize / 1024 / 1024 / 1024" | bc)
+            filename=$(basename "$file")
+            echo "上传: $filename"
             
-            echo "上传: $filename ($(echo "scale=2; $filesize / 1024 / 1024" | bc) MB)"
+            ASSETS=$(curl -s -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/releases/${RELEASE_ID}/assets")
             
-            # GitHub Release 单文件限制 2GB，超过则分片
-            if (( $(echo "$filesize_gb > 1.9" | bc -l) )); then
-              echo "  文件超过 1.9GB，进行分片..."
-              
-              # 分片文件
-              cd website
-              split -b 1900M "$filename" "${filename}.part"
-              rm -f "$filename"
-              
-              # 重命名分片
-              part_num=1
-              for partfile in "${filename}".part*; do
-                [ -f "$partfile" ] && mv "$partfile" "${filename%.zip}.part${part_num}.zip"
-                part_num=$((part_num + 1))
-              done
-              cd ..
-              
-              # 上传所有分片
-              for partfile in website/"${filename%.zip}".part*.zip; do
-                [ ! -f "$partfile" ] && continue
-                
-                partname=$(basename "$partfile")
-                echo "  上传分片: $partname"
-                
-                # 删除同名旧分片
-                ASSETS=$(curl -s -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                  -H "Accept: application/vnd.github+json" \
-                  "https://api.github.com/repos/${REPO}/releases/${RELEASE_ID}/assets" || echo "")
-                
-                OLD_ID=$(echo "$ASSETS" | grep -B 3 "\"name\": \"$partname\"" | grep '"id"' | grep -o '[0-9]*' | head -1 || echo "")
-                
-                if [ -n "$OLD_ID" ]; then
-                  curl -s -X DELETE \
-                    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                    -H "Accept: application/vnd.github+json" \
-                    "https://api.github.com/repos/${REPO}/releases/assets/${OLD_ID}" || true
-                  sleep 1
-                fi
-                
-                # 上传分片
-                UPLOAD_RESP=$(curl -s -X POST \
-                  --max-time 300 \
-                  -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                  -H "Accept: application/vnd.github+json" \
-                  -H "Content-Type: application/zip" \
-                  -T "$partfile" \
-                  "https://uploads.github.com/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${partname}" 2>&1 || echo "")
-                
-                DL_URL=$(echo "$UPLOAD_RESP" | grep -o '"browser_download_url":"[^"]*"' | cut -d'"' -f4 || echo "")
-                
-                if [ -n "$DL_URL" ]; then
-                  PART_SIZE=$(stat -c%s "$partfile" 2>/dev/null || echo 0)
-                  PART_SIZE_MB=$(echo "scale=2; $PART_SIZE / 1024 / 1024" | bc)
-                  echo "    上传成功: ${PART_SIZE_MB} MB"
-                else
-                  echo "    上传失败"
-                fi
-              done
-            else
-              # 文件小于 1.9GB，直接上传
-              # 删除同名旧文件
-              ASSETS=$(curl -s -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/${REPO}/releases/${RELEASE_ID}/assets" || echo "")
-              
-              OLD_ID=$(echo "$ASSETS" | grep -B 3 "\"name\": \"$filename\"" | grep '"id"' | grep -o '[0-9]*' | head -1 || echo "")
-              
-              if [ -n "$OLD_ID" ]; then
-                echo "  删除旧文件 (ID: $OLD_ID)..."
-                curl -s -X DELETE \
-                  -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                  -H "Accept: application/vnd.github+json" \
-                  "https://api.github.com/repos/${REPO}/releases/assets/${OLD_ID}" || true
-                sleep 1
-              fi
-              
-              # 上传新文件
-              UPLOAD_RESP=$(curl -s -X POST \
-                --max-time 300 \
+            OLD_ID=$(echo "$ASSETS" | grep -B 3 "\"name\": \"$filename\"" | grep '"id"' | grep -o '[0-9]*' | head -1)
+            
+            if [ -n "$OLD_ID" ]; then
+              echo "  删除旧文件 (ID: $OLD_ID)..."
+              curl -s -X DELETE \
                 -H "Authorization: Bearer ${GITHUB_TOKEN}" \
                 -H "Accept: application/vnd.github+json" \
-                -H "Content-Type: application/zip" \
-                -T "$zipfile" \
-                "https://uploads.github.com/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${filename}" 2>&1 || echo "")
-              
-              DL_URL=$(echo "$UPLOAD_RESP" | grep -o '"browser_download_url":"[^"]*"' | cut -d'"' -f4 || echo "")
-              
-              if [ -n "$DL_URL" ]; then
-                SIZE_MB=$(echo "scale=2; $filesize / 1024 / 1024" | bc)
-                echo "  上传成功: ${SIZE_MB} MB"
-              else
-                echo "  上传失败"
-              fi
+                "https://api.github.com/repos/${REPO}/releases/assets/${OLD_ID}"
+              sleep 1
+            fi
+            
+            UPLOAD_RESP=$(curl -s -X POST \
+              --max-time 600 \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/x-7z-compressed" \
+              -T "$file" \
+              "https://uploads.github.com/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${filename}")
+            
+            DL_URL=$(echo "$UPLOAD_RESP" | grep -o '"browser_download_url":"[^"]*"' | cut -d'"' -f4)
+            
+            if [ -n "$DL_URL" ]; then
+              SIZE=$(stat -c%s "$file" 2>/dev/null || echo 0)
+              SIZE_MB=$(echo "scale=2; $SIZE / 1024 / 1024" | bc)
+              echo "  上传成功: ${SIZE_MB} MB"
+              echo "  下载地址: $DL_URL"
+            else
+              echo "  上传失败"
             fi
           done
           
-          echo ""
           echo "备份完成"
