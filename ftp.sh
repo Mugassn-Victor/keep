@@ -1,6 +1,5 @@
 #!/bin/bash
-
-CONFIG_FILE="ftp.txt
+CONFIG_FILE="web.txt"
 DOWNLOAD_DIR="./web"
 
 [ ! -f "$CONFIG_FILE" ] && echo "配置文件不存在" && exit 1
