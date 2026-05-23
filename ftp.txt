@@ -1,6 +1,6 @@
 # 备份配置文件
 # 格式: FTP地址|FTP用户|FTP密码|FTP目录|数据库地址|数据库名|数据库用户|数据库密码|压缩包名
 #       ↓1      ↓2      ↓3      ↓4      ↓5        ↓6      ↓7        ↓8        ↓9
-# ftp.example.com|user|pass|/htdocs|localhost|mydb|dbuser|dbpass|full_backup
-
-ftpupload.net|if0_40488178|Mugassn0220113|htdocs|sql213.infinityfree.com|if0_41955101_gzjunyu|if0_41955101|Gzjunyu188|full_backup
+ftpupload.net|if0_37953882|guangzhoujunyu|htdocs|sql310.infinityfree.com|if0_37953882_gzjunyu|if0_37953882|guangzhoujunyu|cleaningmachine-ask.com
+ftpupload.net|if0_38487207|Gzjunyuwanluo|en.xingwang168.cn/htdocs|sql112.infinityfree.com|if0_38487207_gzjunyu|if0_38487207|Gzjunyuwanluo|en.xingwang168.cn
+ftpupload.net|if0_41953842|Gzjunyu168|en.gzxiangtu.com/htdocs|sql101.infinityfree.com|if0_41953842_gzjunyu|if0_41953842|Gzjunyu168|en.gzxiangtu.com
